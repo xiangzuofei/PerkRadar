@@ -1,7 +1,7 @@
 import { CATEGORIES } from "../src/lib/types.js";
 import type { DealFilters } from "../src/lib/filter-deals.js";
 import type { Personal } from "../src/lib/personal-storage.js";
-import { activeDeals, formatTime, loadSnapshotBundle, loadViewerPersonal, nextBoundaryDelay, saveViewerPersonal, selectDeals, SnapshotLoadError, type ViewerSnapshot, type SnapshotStatus } from "./model.js";
+import { activeDeals, formatTime, keywordTags, loadFeedback, loadSnapshotBundle, loadViewerPersonal, nextBoundaryDelay, rankDeals, saveFeedback, saveViewerPersonal, selectDeals, setVote, SnapshotLoadError, type Feedback, type SortMode, type ViewerSnapshot, type SnapshotStatus } from "./model.js";
 
 /** 组件只访问静态 HTML 声明的控件；DOM 引用不跨页面复用。 */
 function elements(root: HTMLElement) {
@@ -9,6 +9,7 @@ function elements(root: HTMLElement) {
   return {
     query: get<HTMLInputElement>("q"), source: get<HTMLSelectElement>("source"), category: get<HTMLSelectElement>("cat"),
     catchips: get<HTMLDivElement>("catchips"), hotwords: get<HTMLDivElement>("hotwords"),
+    sort: get<HTMLSelectElement>("sort"), showHidden: get<HTMLInputElement>("showHidden"), hiddenLabel: get("hidden-label"),
     onlyNew: get<HTMLInputElement>("onlyNew"), onlyFavorites: get<HTMLInputElement>("onlyFav"), showAll: get<HTMLInputElement>("showAll"), reset: get<HTMLButtonElement>("reset"),
     retry: get<HTMLButtonElement>("retry"), meta: get("meta"), warning: get("warning"), storageWarning: get("storage-warning"),
     failureDetails: get<HTMLDetailsElement>("failure-details"), failureSummary: get("failure-summary"), failures: get("failures"), count: get("count"), list: get("list"),
@@ -21,41 +22,6 @@ function node<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, 
   element.className = className;
   if (text !== undefined) element.textContent = text;
   return element;
-}
-
-/** 标题里可直接成标签的关键词；顺序即展示优先级，每条最多取三个。 */
-const KEYWORD_TAGS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/限免/, "限免"],
-  [/永免/, "永免"],
-  [/白嫖/, "白嫖"],
-  [/免费/, "免费"],
-  [/[0零]\s*(?:元|刀)|\d\s*分钱/, "0元"],
-  [/半价/, "半价"],
-  [/秒杀/, "秒杀"],
-  [/红包/, "红包"],
-  [/抽奖/, "抽奖"],
-  [/国补|国家补贴/, "国补"],
-  [/史低/, "史低"],
-  [/兑换码/, "兑换码"],
-  [/优惠码|折扣码/, "优惠码"],
-  [/返现|返利/, "返利"],
-  [/赠送|就送|免费送/, "赠送"],
-  [/steam/i, "Steam"],
-  [/epic/i, "Epic"],
-  [/终身/, "终身"],
-  [/拼车/, "拼车"],
-  [/机场/, "机场"],
-  [/会员/, "会员"],
-  [/VPS|云服务器|服务器/, "服务器"],
-];
-
-function keywordTags(title: string): string[] {
-  const out: string[] = [];
-  for (const [pattern, label] of KEYWORD_TAGS) {
-    if (pattern.test(title) && !out.includes(label)) out.push(label);
-    if (out.length >= 3) break;
-  }
-  return out;
 }
 
 /** 搜索词在标题中用 <mark> 高亮；仍只用文本节点拼接，不拼 HTML。 */
@@ -98,6 +64,9 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
   const initial = loadViewerPersonal(() => window.localStorage);
   let personal: Personal = initial.personal;
   let storageWarning = initial.warning;
+  const initialFeedback = loadFeedback(() => window.localStorage);
+  let feedback: Feedback = initialFeedback.feedback;
+  if (initialFeedback.warning && !storageWarning) storageWarning = initialFeedback.warning;
   let snapshot: ViewerSnapshot | null = null;
   let previous: ViewerSnapshot | null = null;
   let status: SnapshotStatus | null = null;
@@ -113,7 +82,8 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
   /** 筛选状态仅作用于当前页，来源值沿用正式看板的 sourceId。 */
   function filters(): DealFilters {
     const includeOther = ui.showAll.checked || ui.category.value !== "all" || ui.query.value.trim() !== "" || ui.onlyFavorites.checked;
-    return { query: ui.query.value, sourceId: ui.source.value, category: ui.category.value as DealFilters["category"], onlyNew: ui.onlyNew.checked, includeOther };
+    const sort = feedback.sort === "smart" ? undefined : feedback.sort;
+    return { query: ui.query.value, sourceId: ui.source.value, category: ui.category.value as DealFilters["category"], onlyNew: ui.onlyNew.checked, includeOther, sort };
   }
 
   /** 重新读取后保留仍有效的来源选择，分类使用项目共用枚举。 */
@@ -171,6 +141,7 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
     meta.append(node("span", "snapshot-item-cat", deal.category));
     meta.append(document.createTextNode(` · ${publishedText(deal.publishedAt, deal.publishedLabel, now)}`));
     card.append(title, meta);
+    if (deal.summary) card.append(node("p", "snapshot-summary", deal.summary));
     const tags = node("div", "snapshot-tags");
     const addTag = (text: string, kind: string) => {
       const tag = node("span", "snapshot-tag", text);
@@ -190,6 +161,20 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
     }
     if (tags.childElementCount) card.append(tags);
     const actions = node("div", "snapshot-item-actions");
+    const liked = feedback.liked.includes(deal.canonicalUrl);
+    const hiddenItem = feedback.hidden.includes(deal.canonicalUrl);
+    for (const [action, selected, label, aria] of [
+      ["like", liked, "👍", liked ? "已标记喜欢，再点取消" : "喜欢这类内容，之后优先推荐"],
+      ["dislike", hiddenItem, "👎", hiddenItem ? "已隐藏，再点恢复显示" : "不喜欢，隐藏这条并让同类内容靠后"],
+    ] as const) {
+      const button = node("button", "snapshot-button snapshot-vote", label);
+      button.type = "button";
+      button.dataset.action = action;
+      button.dataset.url = deal.canonicalUrl;
+      button.setAttribute("aria-pressed", String(selected));
+      button.setAttribute("aria-label", `${aria}：${deal.title}`);
+      actions.append(button);
+    }
     for (const [action, selected, label] of [["favorite", favorite, favorite ? "已收藏" : "收藏"], ["claim", claimed, claimed ? "已领 · 撤销" : "标记已领"]] as const) {
       const button = node("button", "snapshot-button", label);
       button.type = "button";
@@ -274,10 +259,14 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
       ui.list.replaceChildren(emptyState(loading ? "正在加载线索…" : "快照暂时不可用", "读取公开快照后即可搜索、收藏和标记已领。"));
     } else {
       const active = activeDeals(snapshot, previous, now, status);
-      const shown = selectDeals(snapshot, previous, filters(), personal, now, ui.onlyFavorites.checked, status);
+      const selected = selectDeals(snapshot, previous, filters(), personal, now, ui.onlyFavorites.checked, status);
+      const hiddenCount = selected.filter((item) => feedback.hidden.includes(item.canonicalUrl)).length;
+      const visible = ui.showHidden.checked ? selected : selected.filter((item) => !feedback.hidden.includes(item.canonicalUrl));
+      const shown = feedback.sort === "smart" ? rankDeals(visible, feedback, personal, now) : visible;
       renderCategoryChips(active);
       renderHotwords(active);
-      ui.count.textContent = `显示 ${shown.length} / ${active.length} 条 · 本轮新增 ${active.filter((item) => item.isNew).length} 条`;
+      ui.hiddenLabel.textContent = feedback.hidden.length ? `显示已隐藏（${feedback.hidden.length}）` : "显示已隐藏";
+      ui.count.textContent = `显示 ${shown.length} / ${active.length} 条 · 本轮新增 ${active.filter((item) => item.isNew).length} 条${hiddenCount && !ui.showHidden.checked ? ` · 已隐藏 ${hiddenCount} 条` : ""}`;
       ui.list.replaceChildren(...(shown.length ? shown.map((deal) => renderItem(deal, now)) : [emptyState("没有符合条件的线索", "可以调整左侧筛选，或稍后重新读取快照。过期与超过七天的条目会自动移除。") ]));
     }
     if (focusAction && focusUrl) {
@@ -338,7 +327,13 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
   }
 
   ui.category.replaceChildren(new Option("全部分类", "all"), ...CATEGORIES.map((category) => new Option(category, category)));
-  for (const control of [ui.query, ui.source, ui.category, ui.onlyNew, ui.onlyFavorites, ui.showAll]) control.addEventListener("input", render, { signal: listeners.signal });
+  ui.sort.value = feedback.sort;
+  for (const control of [ui.query, ui.source, ui.category, ui.onlyNew, ui.onlyFavorites, ui.showAll, ui.showHidden]) control.addEventListener("input", render, { signal: listeners.signal });
+  ui.sort.addEventListener("input", () => {
+    feedback = { ...feedback, sort: ui.sort.value as SortMode };
+    if (!saveFeedback(() => window.localStorage, feedback)) storageWarning = "未保存：浏览器存储写入失败。排序偏好刷新后可能丢失。";
+    render();
+  }, { signal: listeners.signal });
   ui.reset.addEventListener("click", () => {
     ui.query.value = "";
     ui.source.value = "all";
@@ -346,6 +341,7 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
     ui.onlyNew.checked = false;
     ui.onlyFavorites.checked = false;
     ui.showAll.checked = false;
+    ui.showHidden.checked = false;
     render();
   }, { signal: listeners.signal });
   ui.retry.addEventListener("click", () => { void refresh(); }, { signal: listeners.signal });
@@ -374,6 +370,17 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
     if (button.dataset.action === "retry") { void refresh(); return; }
     const url = button.dataset.url;
     if (!url || !snapshot?.items.some((item) => item.canonicalUrl === url)) return;
+    if (button.dataset.action === "like" || button.dataset.action === "dislike") {
+      const item = snapshot.items.find((entry) => entry.canonicalUrl === url);
+      if (!item) return;
+      const vote = button.dataset.action === "like"
+        ? (feedback.liked.includes(url) ? null : "like")
+        : (feedback.hidden.includes(url) ? null : "dislike");
+      feedback = setVote(feedback, item, vote as "like" | "dislike" | null);
+      if (!saveFeedback(() => window.localStorage, feedback)) storageWarning = "未保存：浏览器存储写入失败。当前点赞与点踩仅在本页有效，刷新后可能丢失。";
+      render();
+      return;
+    }
     const field = button.dataset.action === "favorite" ? "favorites" : "claimed";
     const values = personal[field];
     personal = { ...personal, [field]: values.includes(url) ? values.filter((value) => value !== url) : [...values, url] };

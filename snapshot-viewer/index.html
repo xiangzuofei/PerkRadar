@@ -22,9 +22,11 @@
         <label class="snapshot-field" for="source">来源<select id="source"><option value="all">全部来源</option></select></label>
         <label class="snapshot-field" for="cat">分类<select id="cat"><option value="all">全部分类</option></select></label>
         <div id="catchips" class="snapshot-chips" aria-label="按分类快捷筛选"></div>
+        <label class="snapshot-field" for="sort">排序<select id="sort"><option value="smart">智能推荐（重要 + 紧要优先）</option><option value="newest">最新发布</option><option value="expiring">即将截止</option></select></label>
         <label class="snapshot-check"><input id="onlyFav" type="checkbox">只看收藏</label>
         <label class="snapshot-check"><input id="showAll" type="checkbox">查看全部线索（含其他）</label>
-        <p class="snapshot-sidebar-note">默认隐藏「其他」分类，可开启查看全部。收藏与已领仅保存在当前浏览器。</p>
+        <label class="snapshot-check"><input id="showHidden" type="checkbox"><span id="hidden-label">显示已隐藏</span></label>
+        <p class="snapshot-sidebar-note">默认隐藏「其他」分类，可开启查看全部。点👍会让同类内容优先，点👎会隐藏该条并让同类内容靠后。收藏、已领与反馈仅保存在当前浏览器。</p>
       </aside>
       <main class="snapshot-main">
         <section class="snapshot-status" aria-label="抓取状态">

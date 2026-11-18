@@ -1,5 +1,5 @@
 import { safeDisplayText, safeHttpUrl } from "../src/lib/board-view.js";
-import { BOARD_MAX_ITEMS, RETENTION_MS, TITLE_MAX } from "../src/lib/config.js";
+import { BOARD_MAX_ITEMS, RETENTION_MS, SUMMARY_MAX, TITLE_MAX } from "../src/lib/config.js";
 import { filterDeals, type DealFilters } from "../src/lib/filter-deals.js";
 import { loadPersonal, STORAGE_KEY, type Personal } from "../src/lib/personal-storage.js";
 import { isExpiringSoon, isStale, referenceTime } from "../src/lib/retention.js";
@@ -84,7 +84,7 @@ function sourceItem(value: unknown, index: number, fetchedAt: number): ViewerIte
     url,
     canonicalUrl: url,
     title,
-    summary: "",
+    summary: safeDisplayText(value.summary, SUMMARY_MAX),
     category,
     sourceId: source.id,
     sourceName: source.name,
@@ -208,6 +208,179 @@ export function saveViewerPersonal(getStorage: () => StorageLike, personal: Pers
     getStorage().setItem(STORAGE_KEY, JSON.stringify(personal));
     return true;
   } catch { return false; }
+}
+
+/** 标题里可直接成标签的关键词；顺序即展示优先级，每条最多取三个。 */
+export const KEYWORD_TAGS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/限免/, "限免"],
+  [/永免/, "永免"],
+  [/白嫖/, "白嫖"],
+  [/免费/, "免费"],
+  [/[0零]\s*(?:元|刀)|\d\s*分钱/, "0元"],
+  [/半价/, "半价"],
+  [/秒杀/, "秒杀"],
+  [/红包/, "红包"],
+  [/抽奖/, "抽奖"],
+  [/国补|国家补贴/, "国补"],
+  [/史低/, "史低"],
+  [/兑换码/, "兑换码"],
+  [/优惠码|折扣码/, "优惠码"],
+  [/返现|返利/, "返利"],
+  [/赠送|就送|免费送/, "赠送"],
+  [/steam/i, "Steam"],
+  [/epic/i, "Epic"],
+  [/终身/, "终身"],
+  [/拼车/, "拼车"],
+  [/机场/, "机场"],
+  [/会员/, "会员"],
+  [/VPS|云服务器|服务器/, "服务器"],
+];
+
+export function keywordTags(title: string): string[] {
+  const out: string[] = [];
+  for (const [pattern, label] of KEYWORD_TAGS) {
+    if (pattern.test(title) && !out.includes(label)) out.push(label);
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+/** 点赞/点踩反馈独立存放，不触碰收藏与已领的既有存储键和形状。 */
+export const FEEDBACK_KEY = "perkradar-feedback-v1";
+export type SortMode = "smart" | "newest" | "expiring";
+export type Feedback = {
+  liked: string[];
+  hidden: string[];
+  likeSignals: Record<string, number>;
+  dislikeSignals: Record<string, number>;
+  sort: SortMode;
+};
+
+export function emptyFeedback(): Feedback {
+  return { liked: [], hidden: [], likeSignals: {}, dislikeSignals: {}, sort: "smart" };
+}
+
+/** 一条内容的可学习信号：分类、来源与标题关键词。 */
+export function itemSignals(item: Pick<DealDTO, "title" | "category" | "sourceId">): string[] {
+  return [`cat:${item.category}`, `src:${item.sourceId}`, ...keywordTags(item.title).map((tag) => `kw:${tag}`)];
+}
+
+function bump(signals: Record<string, number>, keys: string[], delta: number): Record<string, number> {
+  const next = { ...signals };
+  for (const key of keys) {
+    const value = (next[key] ?? 0) + delta;
+    if (value > 0) next[key] = value;
+    else delete next[key];
+  }
+  return next;
+}
+
+/** 设置某条内容的投票：先撤销旧票的信号再记新票，vote 为 null 表示取消投票。 */
+export function setVote(
+  feedback: Feedback,
+  item: Pick<DealDTO, "title" | "category" | "sourceId" | "canonicalUrl">,
+  vote: "like" | "dislike" | null,
+): Feedback {
+  const url = item.canonicalUrl;
+  const keys = itemSignals(item);
+  let liked = feedback.liked;
+  let hidden = feedback.hidden;
+  let likeSignals = feedback.likeSignals;
+  let dislikeSignals = feedback.dislikeSignals;
+  if (liked.includes(url)) {
+    liked = liked.filter((value) => value !== url);
+    likeSignals = bump(likeSignals, keys, -1);
+  }
+  if (hidden.includes(url)) {
+    hidden = hidden.filter((value) => value !== url);
+    dislikeSignals = bump(dislikeSignals, keys, -1);
+  }
+  if (vote === "like") {
+    liked = [...liked, url];
+    likeSignals = bump(likeSignals, keys, 1);
+  }
+  if (vote === "dislike") {
+    hidden = [...hidden, url];
+    dislikeSignals = bump(dislikeSignals, keys, 1);
+  }
+  return { ...feedback, liked, hidden, likeSignals, dislikeSignals };
+}
+
+function stringList(value: unknown, cap: number): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0))].slice(0, cap);
+}
+
+function signalMap(value: unknown): Record<string, number> {
+  if (!record(value)) return {};
+  const out: Record<string, number> = {};
+  for (const [key, entry] of Object.entries(value).slice(0, 300)) {
+    if (typeof entry === "number" && Number.isFinite(entry) && entry > 0) out[key.slice(0, 80)] = Math.min(99, Math.floor(entry));
+  }
+  return out;
+}
+
+/** 反馈读取失败时回落到空反馈并给出提示，不影响浏览与收藏。 */
+export function loadFeedback(getStorage: () => StorageLike): { feedback: Feedback; warning: string | null } {
+  const warning = "浏览器存储不可用或反馈内容无法读取；点赞与点踩仍可在本页操作，可能无法保存。";
+  try {
+    const raw = getStorage().getItem(FEEDBACK_KEY);
+    if (raw === null) return { feedback: emptyFeedback(), warning: null };
+    const value: unknown = JSON.parse(raw);
+    if (!record(value)) return { feedback: emptyFeedback(), warning };
+    return {
+      feedback: {
+        liked: stringList(value.liked, 500),
+        hidden: stringList(value.hidden, 500),
+        likeSignals: signalMap(value.likeSignals),
+        dislikeSignals: signalMap(value.dislikeSignals),
+        sort: value.sort === "newest" || value.sort === "expiring" ? value.sort : "smart",
+      },
+      warning: null,
+    };
+  } catch {
+    return { feedback: emptyFeedback(), warning };
+  }
+}
+
+export function saveFeedback(getStorage: () => StorageLike, feedback: Feedback): boolean {
+  try {
+    getStorage().setItem(FEEDBACK_KEY, JSON.stringify(feedback));
+    return true;
+  } catch { return false; }
+}
+
+const CATEGORY_BASE: Record<string, number> = { "限免": 50, "免费白嫖": 48, "低价优惠": 42, "会员订阅": 38, "游戏": 34, "软件工具": 26, "其他": 10 };
+
+/** 智能排序分数：分类重要性打底，临近截止最紧要，再叠加新鲜度与点赞/点踩学到的偏好。 */
+export function scoreItem(item: DealDTO, feedback: Feedback, personal: Personal, now: number): number {
+  let score = CATEGORY_BASE[item.category] ?? 10;
+  if (item.expiresSoon) score += 30;
+  else if (item.expiresAt !== null && item.expiresAt > now && item.expiresAt - now <= 86_400_000) score += 18;
+  if (item.isNew) score += 12;
+  if (item.publishedAt !== null) {
+    const age = now - item.publishedAt;
+    if (age >= 0 && age <= 6 * 3_600_000) score += 8;
+    else if (age >= 0 && age <= 86_400_000) score += 4;
+  }
+  if (personal.favorites.includes(item.canonicalUrl)) score += 15;
+  let bonus = 0;
+  let penalty = 0;
+  for (const key of itemSignals(item)) {
+    bonus += (feedback.likeSignals[key] ?? 0) * 6;
+    penalty += (feedback.dislikeSignals[key] ?? 0) * 8;
+  }
+  score += Math.min(36, bonus) - Math.min(48, penalty);
+  if (personal.claimed.includes(item.canonicalUrl)) score -= 1000;
+  return score;
+}
+
+/** 按智能分数降序，同分按发布时间降序；不改动入参数组。 */
+export function rankDeals<T extends DealDTO>(items: readonly T[], feedback: Feedback, personal: Personal, now: number): T[] {
+  return items
+    .map((item, index) => ({ item, index, score: scoreItem(item, feedback, personal, now) }))
+    .sort((a, b) => b.score - a.score || (b.item.publishedAt ?? 0) - (a.item.publishedAt ?? 0) || a.index - b.index)
+    .map((entry) => entry.item);
 }
 
 /** 到期、七天留存和新鲜度边界按实际时刻刷新；最长三十秒再复核一次。 */
