@@ -5,7 +5,7 @@ on:
   pull_request:
   schedule:
     # GitHub cron 使用 UTC，与应用两小时抓取间隔一致。
-    - cron: '23 */2 * * *'
+    - cron: '23 */6 * * *'
 
 concurrency:
   # PR 检查不能占用定时发布的并发组，否则会挡住或被挡住抓取。
