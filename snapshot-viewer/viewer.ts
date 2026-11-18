@@ -8,6 +8,7 @@ function elements(root: HTMLElement) {
   const get = <T extends HTMLElement>(id: string) => root.querySelector<T>(`#${id}`)!;
   return {
     query: get<HTMLInputElement>("q"), source: get<HTMLSelectElement>("source"), category: get<HTMLSelectElement>("cat"),
+    catchips: get<HTMLDivElement>("catchips"), hotwords: get<HTMLDivElement>("hotwords"),
     onlyNew: get<HTMLInputElement>("onlyNew"), onlyFavorites: get<HTMLInputElement>("onlyFav"), showAll: get<HTMLInputElement>("showAll"), reset: get<HTMLButtonElement>("reset"),
     retry: get<HTMLButtonElement>("retry"), meta: get("meta"), warning: get("warning"), storageWarning: get("storage-warning"),
     failureDetails: get<HTMLDetailsElement>("failure-details"), failureSummary: get("failure-summary"), failures: get("failures"), count: get("count"), list: get("list"),
@@ -20,6 +21,74 @@ function node<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, 
   element.className = className;
   if (text !== undefined) element.textContent = text;
   return element;
+}
+
+/** 标题里可直接成标签的关键词；顺序即展示优先级，每条最多取三个。 */
+const KEYWORD_TAGS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/限免/, "限免"],
+  [/永免/, "永免"],
+  [/白嫖/, "白嫖"],
+  [/免费/, "免费"],
+  [/[0零]\s*(?:元|刀)|\d\s*分钱/, "0元"],
+  [/半价/, "半价"],
+  [/秒杀/, "秒杀"],
+  [/红包/, "红包"],
+  [/抽奖/, "抽奖"],
+  [/国补|国家补贴/, "国补"],
+  [/史低/, "史低"],
+  [/兑换码/, "兑换码"],
+  [/优惠码|折扣码/, "优惠码"],
+  [/返现|返利/, "返利"],
+  [/赠送|就送|免费送/, "赠送"],
+  [/steam/i, "Steam"],
+  [/epic/i, "Epic"],
+  [/终身/, "终身"],
+  [/拼车/, "拼车"],
+  [/机场/, "机场"],
+  [/会员/, "会员"],
+  [/VPS|云服务器|服务器/, "服务器"],
+];
+
+function keywordTags(title: string): string[] {
+  const out: string[] = [];
+  for (const [pattern, label] of KEYWORD_TAGS) {
+    if (pattern.test(title) && !out.includes(label)) out.push(label);
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+/** 搜索词在标题中用 <mark> 高亮；仍只用文本节点拼接，不拼 HTML。 */
+function fillTitle(link: HTMLAnchorElement, title: string, query: string): void {
+  const q = query.trim().toLowerCase();
+  if (!q) {
+    link.textContent = title;
+    return;
+  }
+  const lower = title.toLowerCase();
+  let from = 0;
+  let at = lower.indexOf(q, from);
+  if (at === -1) {
+    link.textContent = title;
+    return;
+  }
+  while (at !== -1) {
+    if (at > from) link.append(document.createTextNode(title.slice(from, at)));
+    link.append(node("mark", "snapshot-mark", title.slice(at, at + q.length)));
+    from = at + q.length;
+    at = lower.indexOf(q, from);
+  }
+  if (from < title.length) link.append(document.createTextNode(title.slice(from)));
+}
+
+/** 七天内显示相对时间，更早的沿用快照的绝对时间标签。 */
+function publishedText(publishedAt: number | null, publishedLabel: string | null, now: number): string {
+  if (publishedAt === null) return "发布时间未知";
+  const diff = now - publishedAt;
+  if (diff >= 0 && diff < 3_600_000) return `${Math.max(1, Math.floor(diff / 60_000))}分钟前`;
+  if (diff >= 0 && diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}小时前`;
+  if (diff >= 0 && diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}天前`;
+  return publishedLabel ?? formatTime(publishedAt);
 }
 
 /** 初始化一页快照，并返回卸载时释放请求、定时器和监听器的函数。 */
@@ -84,18 +153,24 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
   }
 
   /** 卡片只创建经过协议与来源校验的链接，个人状态通过按钮明确表达。 */
-  function renderItem(deal: ReturnType<typeof selectDeals>[number]): HTMLElement {
+  function renderItem(deal: ReturnType<typeof selectDeals>[number], now: number): HTMLElement {
     const card = node("article", "snapshot-item");
     const claimed = personal.claimed.includes(deal.canonicalUrl);
     const favorite = personal.favorites.includes(deal.canonicalUrl);
     card.dataset.claimed = String(claimed);
+    card.dataset.category = deal.category;
     const title = node("h2", "");
-    const link = node("a", "", deal.title);
+    const link = node("a", "");
     link.href = deal.url;
     link.target = "_blank";
     link.rel = "noopener noreferrer";
+    fillTitle(link, deal.title, ui.query.value);
     title.append(link);
-    card.append(title, node("p", "snapshot-item-meta", `${deal.sourceName} · ${deal.category}${deal.publishedLabel ? ` · ${deal.publishedLabel}` : " · 发布时间未知"}`));
+    const meta = node("p", "snapshot-item-meta");
+    meta.append(document.createTextNode(`${deal.sourceName} · `));
+    meta.append(node("span", "snapshot-item-cat", deal.category));
+    meta.append(document.createTextNode(` · ${publishedText(deal.publishedAt, deal.publishedLabel, now)}`));
+    card.append(title, meta);
     const tags = node("div", "snapshot-tags");
     const addTag = (text: string, kind: string) => {
       const tag = node("span", "snapshot-tag", text);
@@ -105,6 +180,14 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
     if (deal.isNew) addTag("本轮新增", "new");
     if (deal.expiresLabel) addTag(`${deal.expiresSoon ? "即将截止" : "截止"} ${deal.expiresLabel}`, "expiry");
     if (claimed) addTag("已领", "claimed");
+    for (const keyword of keywordTags(deal.title)) {
+      const tag = node("button", "snapshot-tag", keyword);
+      tag.type = "button";
+      tag.dataset.kind = "kw";
+      tag.dataset.kw = keyword;
+      tag.title = `按「${keyword}」筛选`;
+      tags.append(tag);
+    }
     if (tags.childElementCount) card.append(tags);
     const actions = node("div", "snapshot-item-actions");
     for (const [action, selected, label] of [["favorite", favorite, favorite ? "已收藏" : "收藏"], ["claim", claimed, claimed ? "已领 · 撤销" : "标记已领"]] as const) {
@@ -118,6 +201,47 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
     }
     card.append(actions);
     return card;
+  }
+
+  /** 分类 chips 与下拉保持同一状态：计数来自当前留存条目，点击即切换分类筛选。 */
+  function renderCategoryChips(active: ReturnType<typeof activeDeals>): void {
+    const counts = new Map<string, number>();
+    for (const item of active) counts.set(item.category, (counts.get(item.category) ?? 0) + 1);
+    const make = (value: string, text: string, count: number): HTMLButtonElement => {
+      const chip = node("button", "snapshot-chip", text);
+      chip.type = "button";
+      chip.dataset.catchip = value;
+      chip.dataset.active = String(ui.category.value === value);
+      chip.append(node("span", "snapshot-chip-count", String(count)));
+      return chip;
+    };
+    const chips = [make("all", "全部", active.length)];
+    for (const category of CATEGORIES) {
+      const count = counts.get(category) ?? 0;
+      if (count > 0) chips.push(make(category, category, count));
+    }
+    ui.catchips.replaceChildren(...chips);
+  }
+
+  /** 热门关键词按当前留存标题的出现次数排序，点击即按该词搜索（搜索自动包含「其他」）。 */
+  function renderHotwords(active: ReturnType<typeof activeDeals>): void {
+    const counts = new Map<string, number>();
+    for (const item of active) for (const label of keywordTags(item.title)) counts.set(label, (counts.get(label) ?? 0) + 1);
+    const top = [...counts.entries()].filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    ui.hotwords.hidden = top.length === 0;
+    if (!top.length) {
+      ui.hotwords.replaceChildren();
+      return;
+    }
+    const chips = top.map(([label, count]) => {
+      const chip = node("button", "snapshot-chip", label);
+      chip.type = "button";
+      chip.dataset.kw = label;
+      chip.dataset.active = String(ui.query.value.trim() === label);
+      chip.append(node("span", "snapshot-chip-count", String(count)));
+      return chip;
+    });
+    ui.hotwords.replaceChildren(node("span", "snapshot-hotwords-label", "热门关键词"), ...chips);
   }
 
   /** 加载、空结果和错误共用可重试入口，错误轮询不会清空已经加载的列表。 */
@@ -145,12 +269,16 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
     const focusUrl = focused?.dataset.url;
     if (!snapshot) {
       ui.count.textContent = loading ? "正在加载…" : "尚无可展示条目";
+      ui.hotwords.hidden = true;
+      ui.catchips.replaceChildren();
       ui.list.replaceChildren(emptyState(loading ? "正在加载线索…" : "快照暂时不可用", "读取公开快照后即可搜索、收藏和标记已领。"));
     } else {
       const active = activeDeals(snapshot, previous, now, status);
       const shown = selectDeals(snapshot, previous, filters(), personal, now, ui.onlyFavorites.checked, status);
+      renderCategoryChips(active);
+      renderHotwords(active);
       ui.count.textContent = `显示 ${shown.length} / ${active.length} 条 · 本轮新增 ${active.filter((item) => item.isNew).length} 条`;
-      ui.list.replaceChildren(...(shown.length ? shown.map(renderItem) : [emptyState("没有符合条件的线索", "可以调整左侧筛选，或稍后重新读取快照。过期与超过七天的条目会自动移除。") ]));
+      ui.list.replaceChildren(...(shown.length ? shown.map((deal) => renderItem(deal, now)) : [emptyState("没有符合条件的线索", "可以调整左侧筛选，或稍后重新读取快照。过期与超过七天的条目会自动移除。") ]));
     }
     if (focusAction && focusUrl) {
       [...ui.list.querySelectorAll<HTMLButtonElement>("button[data-action]")].find((button) => button.dataset.action === focusAction && button.dataset.url === focusUrl)?.focus({ preventScroll: true });
@@ -221,7 +349,26 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
     render();
   }, { signal: listeners.signal });
   ui.retry.addEventListener("click", () => { void refresh(); }, { signal: listeners.signal });
+  const applyKeyword = (keyword: string) => {
+    ui.query.value = keyword;
+    render();
+  };
+  ui.catchips.addEventListener("click", (event) => {
+    const chip = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("button[data-catchip]") : null;
+    if (!chip || !ui.catchips.contains(chip)) return;
+    ui.category.value = chip.dataset.catchip ?? "all";
+    render();
+  }, { signal: listeners.signal });
+  ui.hotwords.addEventListener("click", (event) => {
+    const chip = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("button[data-kw]") : null;
+    if (chip?.dataset.kw) applyKeyword(chip.dataset.kw);
+  }, { signal: listeners.signal });
   ui.list.addEventListener("click", (event) => {
+    const keywordTag = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("button[data-kw]") : null;
+    if (keywordTag?.dataset.kw && ui.list.contains(keywordTag)) {
+      applyKeyword(keywordTag.dataset.kw);
+      return;
+    }
     const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("button[data-action]") : null;
     if (!button || !ui.list.contains(button)) return;
     if (button.dataset.action === "retry") { void refresh(); return; }

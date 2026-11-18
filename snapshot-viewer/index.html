@@ -21,6 +21,7 @@
         <label class="snapshot-field" for="q">标题搜索<input id="q" type="search" placeholder="搜索标题关键词" autocomplete="off" maxlength="300"></label>
         <label class="snapshot-field" for="source">来源<select id="source"><option value="all">全部来源</option></select></label>
         <label class="snapshot-field" for="cat">分类<select id="cat"><option value="all">全部分类</option></select></label>
+        <div id="catchips" class="snapshot-chips" aria-label="按分类快捷筛选"></div>
         <label class="snapshot-check"><input id="onlyFav" type="checkbox">只看收藏</label>
         <label class="snapshot-check"><input id="showAll" type="checkbox">查看全部线索（含其他）</label>
         <p class="snapshot-sidebar-note">默认隐藏「其他」分类，可开启查看全部。收藏与已领仅保存在当前浏览器。</p>
@@ -33,6 +34,7 @@
           <p id="storage-warning" class="snapshot-warning" role="status" hidden></p>
           <details id="failure-details" hidden><summary id="failure-summary">来源失败详情</summary><ul id="failures"></ul></details>
         </section>
+        <div id="hotwords" class="snapshot-hotwords" hidden></div>
         <div class="snapshot-results-heading">
           <span id="count" aria-live="polite">正在加载…</span>
           <label class="snapshot-new-toggle"><input id="onlyNew" type="checkbox"><span class="snapshot-switch" aria-hidden="true"></span>只看本轮新增</label>
