@@ -101,9 +101,9 @@ jobs:
         run: npm run snapshot:prepare
       - name: Build the static viewer
         run: npm run build:snapshot
-    - name: Mirror site to snapshot branch
-    uses: peaceiris/actions-gh-pages@v4
-    with:
+      - name: Mirror site to snapshot branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ${{ runner.temp }}/perkradar-pages
           publish_branch: snapshot
