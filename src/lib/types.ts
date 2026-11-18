@@ -4,6 +4,7 @@ export const CATEGORIES = [
   "低价优惠",
   "会员订阅",
   "游戏",
+  "软件工具",
   "其他",
 ] as const;
 

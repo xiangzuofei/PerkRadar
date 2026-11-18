@@ -13,13 +13,13 @@ function token(title: string, word: string): boolean {
 
 /** Wording that states an offer outright. Worth 5: survives one question mark or a mild penalty. */
 const STRONG =
-  /限免|免费领|优惠[码券]|折扣码|兑换码|大促|促销|特价|降价|打折|爆降|折扣|永免|白嫖|秒杀|立减|满减|返现|返利|半价|史低|新低|羊毛|薅|红包|福利|赠送|买一送一|首月|黑五|双十一|双\s*11|(?:^|[^\d.])\d(?:\.\d)?\s*折|[0零]\s*元(?:购|领|撸|体验|试用)/;
+  /限免|免费领|优惠[码券]|折扣码|兑换码|大促|促销|特价|降价|打折|爆降|折扣|永免|白嫖|秒杀|立减|满减|返现|返利|半价|史低|新低|羊毛|薅|红包|福利|赠送|公益站|买一送一|首月|黑五|双十一|双\s*11|\d+\s*分钱|(?:^|[^\d.])\d(?:\.\d)?\s*折|[0零]\s*(?:元(?:购|领|撸|体验|试用)|刀)/;
 
 /** Weaker hints. Worth 3: enough on their own, not enough against a question. */
 const MEDIUM =
-  /免费|优惠|(?:注册|新人|新用户|评论|留言)[^，。,.!！]{0,6}送|送[^，。,.!！]{0,8}(?:额度|会员|流量|时长|积分|余额)|体验额度|低至|\d+\s*%\s*off/i;
+  /免费|优惠|(?:注册|新人|新用户|评论|留言)[^，。,.!！]{0,6}送|送[^，。,.!！]{0,8}(?:额度|会员|流量|时长|积分|余额|现金|话费|元|块|¥\s*\d)|(?:领|领取|白拿)[^，。,.!！]{0,6}(?:月卡|年卡|会员|季度|半年|一个月|一年|三个月)|送\s*(?:¥\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:元|块))|体验额度|低至|\d+\s*%\s*off/i;
 
-const FREEBIE = /白嫖|免费|永免|赠送|羊毛|薅|红包|福利|返现|返利|体验额度|送[^，。,.!！]{0,8}(?:额度|会员|流量|时长|积分|余额)|[0零]\s*元/;
+const FREEBIE = /白嫖|免费|永免|赠送|羊毛|薅|红包|福利|返现|返利|体验额度|公益站|送[^，。,.!！]{0,8}(?:额度|会员|流量|时长|积分|余额|现金|话费|元|块|¥\s*\d)|送\s*(?:¥\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:元|块))|[0零]\s*(?:元|刀)/;
 
 /** "收/求 + 目标" 这类求购帖，目标前允许夹一个短品牌词。 */
 const REQUEST =
@@ -44,7 +44,7 @@ export function classifySignals(title: string, sourceId: string): Classification
   if (sourceId === "epic") return { category: "游戏", contentType: "deal", confidence: "high", score: 10 };
   const strong = STRONG.test(title);
   const medium = MEDIUM.test(title);
-  const membership = /会员|订阅|套餐/.test(title);
+  const membership = /会员|订阅|套餐/.test(title) || token(title, "plus") || token(title, "vip");
   const game = token(title, "epic") || token(title, "steam") || /游戏|喜加一/.test(title);
   const hardNoise = /抽奖|开奖|抽取|求购|收购|求助/.test(title) || REQUEST.test(title);
   const trade = TRADE.test(title);
@@ -58,6 +58,15 @@ export function classifySignals(title: string, sourceId: string): Classification
     (question ? 4 : 0) -
     (/[?？]/.test(title) && !strong ? 1 : 0);
 
+  const softwareSource = sourceId === "appinn" || sourceId === "ghxi" || sourceId === "iplaysoft";
+  const versionMark = /v\d+\.\d+(?:\.\d+)?|\d+\.\d+\.\d+/i.test(title);
+  const editionMark = /便携版|绿色版|官方版|正式版/.test(title);
+  const softwareNoun = /软件|工具|应用|客户端|编辑器|播放器|管理器|启动器|绘图|翻译|歌词|资源管理器|文本编辑/.test(title);
+  const isSoftware =
+    !hardNoise &&
+    !trade &&
+    ((softwareSource && (versionMark || editionMark)) || (versionMark && softwareNoun) || (editionMark && softwareNoun));
+
   let category: Category = "其他";
   if (score >= 2) {
     if (game) category = "游戏";
@@ -65,10 +74,12 @@ export function classifySignals(title: string, sourceId: string): Classification
     else if (/限免|免费领/.test(title)) category = "限免";
     else if (FREEBIE.test(title)) category = "免费白嫖";
     else category = "低价优惠";
+  } else if (isSoftware) {
+    category = "软件工具";
   }
   return {
     category,
-    contentType: category !== "其他" ? "deal" : hardNoise || trade || editorial || question ? "discussion" : "uncertain",
+    contentType: score >= 2 ? "deal" : hardNoise || trade || editorial || question ? "discussion" : "uncertain",
     confidence: score >= 5 ? "high" : score >= 2 ? "medium" : "low",
     score,
   };
