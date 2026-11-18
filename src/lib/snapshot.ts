@@ -1,10 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { REFRESH_INTERVAL_MS } from "./config";
+import { excerpt } from "./text";
 import type { BoardState } from "./types";
 
 export type DealSnapshotItem = {
   title: string;
+  /** 来源订阅源自带的简短摘要（已清洗截断）；无摘要的来源为空字符串。 */
+  summary: string;
   url: string;
   sourceId: string;
   sourceName: string;
@@ -53,7 +56,7 @@ export function buildSnapshot(board: BoardState): DealSnapshot {
   const fetchedAtMs = board.lastUpdatedAt ?? board.generatedAt;
   return {
     schema: "daily-deals.snapshot.v1",
-    note: "公开抓取快照，只含标题、原文链接、时间和来源成败。不含凭证、Cookie、请求头或正文。fetchedAt 过期后不能当作新一轮数据。",
+    note: "公开抓取快照，含标题、来源提供的简短摘要、原文链接、时间和来源成败。不含凭证、Cookie、请求头或完整正文。fetchedAt 过期后不能当作新一轮数据。",
     fetchedAt: new Date(fetchedAtMs).toISOString(),
     fetchedAtBeijing: board.lastUpdatedLabel,
     freshUntil: new Date(fetchedAtMs + REFRESH_INTERVAL_MS).toISOString(),
@@ -73,6 +76,7 @@ export function buildSnapshot(board: BoardState): DealSnapshot {
     })),
     items: board.deals.map((deal) => ({
       title: deal.title,
+      summary: excerpt(deal.summary),
       url: deal.url,
       sourceId: deal.sourceId,
       sourceName: deal.sourceName,

@@ -1,4 +1,4 @@
-import { BOARD_MAX_ITEMS, RETENTION_MS } from "./config";
+import { BOARD_MAX_ITEMS, RETENTION_MS, SUMMARY_MAX } from "./config";
 import { safeDisplayText, safeHttpUrl } from "./board-view";
 import { SOURCE_DEFS } from "./source-defs";
 import type { DealSnapshot, DealSnapshotItem } from "./snapshot";
@@ -45,6 +45,7 @@ function activeItem(item: DealSnapshotItem, firstSeenAt: string, now: number): D
   const source = SOURCE_DEFS.find((entry) => entry.id === item.sourceId)!;
   return {
     title: safeDisplayText(item.title, 300),
+    summary: safeDisplayText(item.summary, SUMMARY_MAX),
     url: canonicalUrl(item.url),
     sourceId: source.id,
     sourceName: source.name,
