@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: read
+      contents: write
       actions: read
     env:
       # 只在这个不跑测试的作业里关掉调度，避免一次性抓取再拉起后台轮询。
@@ -101,6 +101,13 @@ jobs:
         run: npm run snapshot:prepare
       - name: Build the static viewer
         run: npm run build:snapshot
+    - name: Mirror site to snapshot branch
+    uses: peaceiris/actions-gh-pages@v4
+    with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ${{ runner.temp }}/perkradar-pages
+          publish_branch: snapshot
+          force_orphan: true
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
