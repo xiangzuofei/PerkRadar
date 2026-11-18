@@ -51,4 +51,23 @@ describe("classify", () => {
     assert.equal(classify("x10hosting 永免虚拟主机", "linuxdo"), "免费白嫖");
     assert.equal(classify("软件更新公告", "appinn"), "其他");
   });
+
+  it("files software releases with version or edition marks as 软件工具", () => {
+    assert.equal(classify("花笺 v1.2.0", "ghxi"), "软件工具");
+    assert.equal(classify("Rufus(U盘启动) v4.16 便携版", "ghxi"), "软件工具");
+    assert.equal(classify("ChatLab(聊天记录分析工具) v0.37.6", "ghxi"), "软件工具");
+    assert.equal(classify("Notepad - - (文本编辑器) v3.9.3 官方版", "ghxi"), "软件工具");
+    assert.equal(classify("低清视频怎么变清晰？AI视频超分实测", "appinn"), "其他");
+    assert.equal(classify("GPT-6.2 上线实测", "v2ex"), "其他");
+  });
+
+  it("catches giveaway amounts, fen prices and public API stations", () => {
+    assert.equal(classify("留个 ID 就送 3.5 元", "linuxdo"), "免费白嫖");
+    assert.equal(classify("留 ID 送 ¥3.5", "linuxdo"), "免费白嫖");
+    assert.equal(classify("送一张0刀虚拟卡", "linuxdo"), "免费白嫖");
+    assert.equal(classify("【哔哩公益站】2亿 token", "linuxdo"), "免费白嫖");
+    assert.equal(classify("挪瓦咖啡1分钱", "linuxdo"), "低价优惠");
+    assert.equal(classify("领一个月会员", "linuxdo"), "会员订阅");
+    assert.equal(classify("ChatGPT Plus 充值，125", "v2ex"), "会员订阅");
+  });
 });
