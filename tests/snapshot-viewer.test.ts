@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { STORAGE_KEY } from "../src/lib/personal-storage";
-import { activeDeals, loadSnapshotBundle, loadViewerPersonal, nextBoundaryDelay, parseSnapshot, parseSnapshotStatus, saveViewerPersonal, selectDeals } from "../snapshot-viewer/model";
+import { activeDeals, emptyFeedback, loadFeedback, loadSnapshotBundle, loadViewerPersonal, nextBoundaryDelay, parseSnapshot, parseSnapshotStatus, rankDeals, saveFeedback, saveViewerPersonal, scoreItem, selectDeals, setVote, type Feedback } from "../snapshot-viewer/model";
+import type { DealDTO } from "../src/lib/types";
 
 const NOW = Date.parse("2026-11-11T08:00:00Z");
 const WEEK = 7 * 24 * 60 * 60 * 1000;
@@ -153,5 +154,79 @@ describe("snapshot viewer", () => {
       return true;
     });
     await assert.rejects(loadSnapshotBundle(async () => Response.json({})), /不是有效的公开快照/);
+  });
+});
+
+describe("snapshot viewer feedback and ranking", () => {
+  const deal = (extra: Partial<DealDTO> = {}): DealDTO => ({
+    id: 0,
+    url: "https://linux.do/t/topic/9",
+    canonicalUrl: "https://linux.do/t/topic/9",
+    title: "测试标题",
+    summary: "",
+    category: "其他",
+    sourceId: "linuxdo",
+    sourceName: "LINUX DO",
+    publishedAt: NOW,
+    expiresAt: null,
+    publishedLabel: null,
+    expiresLabel: null,
+    expiresSoon: false,
+    isNew: false,
+    ...extra,
+  });
+  const noPersonal = { claimed: [] as string[], favorites: [] as string[] };
+
+  it("parses the source summary and defaults to empty", () => {
+    assert.equal(parsed(snapshotInput({ items: [itemInput({ summary: "  来源自带的  摘要 " })] })).items[0]?.summary, "来源自带的 摘要");
+    assert.equal(parsed().items[0]?.summary, "");
+  });
+
+  it("setVote records signals, switches and toggles off", () => {
+    const item = deal({ title: "免费领会员", category: "会员订阅" });
+    const liked = setVote(emptyFeedback(), item, "like");
+    assert.deepEqual(liked.liked, [item.canonicalUrl]);
+    assert.equal(liked.likeSignals["cat:会员订阅"], 1);
+    assert.equal(liked.likeSignals["kw:会员"], 1);
+    assert.equal(liked.likeSignals["src:linuxdo"], 1);
+    const disliked = setVote(liked, item, "dislike");
+    assert.deepEqual(disliked.liked, []);
+    assert.deepEqual(disliked.likeSignals, {});
+    assert.deepEqual(disliked.hidden, [item.canonicalUrl]);
+    assert.equal(disliked.dislikeSignals["kw:会员"], 1);
+    const cleared = setVote(disliked, item, null);
+    assert.deepEqual(cleared.hidden, []);
+    assert.deepEqual(cleared.dislikeSignals, {});
+  });
+
+  it("feedback storage round-trips and corrupted data falls back with a warning", () => {
+    const backing = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => backing.get(key) ?? null,
+      setItem: (key: string, value: string) => { backing.set(key, value); },
+    };
+    const saved: Feedback = { ...setVote(emptyFeedback(), deal({ title: "免费领会员", category: "会员订阅" }), "like"), sort: "expiring" };
+    assert.equal(saveFeedback(() => storage, saved), true);
+    assert.deepEqual(loadFeedback(() => storage).feedback, saved);
+    backing.set("perkradar-feedback-v1", "{oops");
+    const fallback = loadFeedback(() => storage);
+    assert.deepEqual(fallback.feedback, emptyFeedback());
+    assert.ok(fallback.warning);
+  });
+
+  it("scoreItem puts urgent deals first, sinks claimed, and learns from votes", () => {
+    const urgent = deal({ title: "限免工具", category: "限免", expiresSoon: true });
+    const plain = deal({ title: "闲聊帖", category: "其他", canonicalUrl: "https://linux.do/t/topic/10", url: "https://linux.do/t/topic/10" });
+    const empty = emptyFeedback();
+    assert.ok(scoreItem(urgent, empty, noPersonal, NOW) > scoreItem(plain, empty, noPersonal, NOW));
+    assert.ok(scoreItem(urgent, empty, { claimed: [urgent.canonicalUrl], favorites: [] }, NOW) < scoreItem(plain, empty, noPersonal, NOW));
+
+    const software = deal({ title: "Rufus 工具", category: "软件工具", canonicalUrl: "https://linux.do/t/topic/11", url: "https://linux.do/t/topic/11" });
+    const game = deal({ title: "某游戏上架", category: "游戏", sourceId: "epic", sourceName: "Epic", canonicalUrl: "https://linux.do/t/topic/12", url: "https://linux.do/t/topic/12" });
+    assert.deepEqual(rankDeals([software, game], empty, noPersonal, NOW).map((item) => item.canonicalUrl), [game.canonicalUrl, software.canonicalUrl]);
+    const likedSoftware = setVote(empty, deal({ title: "另一个工具", category: "软件工具", canonicalUrl: "https://linux.do/t/topic/13", url: "https://linux.do/t/topic/13" }), "like");
+    assert.deepEqual(rankDeals([software, game], likedSoftware, noPersonal, NOW).map((item) => item.canonicalUrl), [software.canonicalUrl, game.canonicalUrl]);
+    const dislikedSoftware = setVote(empty, deal({ title: "又一个工具", category: "软件工具", canonicalUrl: "https://linux.do/t/topic/14", url: "https://linux.do/t/topic/14" }), "dislike");
+    assert.deepEqual(rankDeals([software, game], dislikedSoftware, noPersonal, NOW).map((item) => item.canonicalUrl), [game.canonicalUrl, software.canonicalUrl]);
   });
 });

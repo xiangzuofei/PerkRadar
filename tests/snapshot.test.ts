@@ -40,7 +40,7 @@ function syntheticBoard(): BoardState {
         url: "https://linux.do/t/topic/1",
         canonicalUrl: "https://linux.do/t/topic/1",
         title: "SYNTHETIC 快照标题",
-        summary: "SYNTHETIC summary must not be copied",
+        summary: "SYNTHETIC summary",
         category: "免费白嫖",
         sourceId: "linuxdo",
         sourceName: "LINUX DO福利羊毛",
@@ -152,11 +152,10 @@ describe("public snapshot", () => {
     assert.equal(snapshot.items[0]?.publishedAtBeijing, "2026-11-08 13:36");
     assert.equal(snapshot.items[0]?.expiresAt, "2026-11-12T16:00:00.000Z");
     assert.equal(snapshot.items[0]?.category, "免费白嫖");
+    assert.equal(snapshot.items[0]?.summary, "SYNTHETIC summary");
     const serialized = JSON.stringify(snapshot);
-    assert.equal(serialized.includes("summary"), false);
     assert.equal(serialized.includes("cookie"), false);
     assert.equal(serialized.includes("authorization"), false);
-    assert.equal(serialized.includes("SYNTHETIC summary"), false);
   });
 
   it("writes latest.json from a completed SYNTHETIC refresh", async () => {
