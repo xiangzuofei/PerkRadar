@@ -1,0 +1,10 @@
+{
+  "attemptedAt": "2026-11-21T17:15:35.294Z",
+  "roundStatus": "success",
+  "sourceHealth": {
+    "ok": 7,
+    "total": 7
+  },
+  "failures": [],
+  "retainedPrevious": false
+}
