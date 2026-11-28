@@ -33,6 +33,7 @@ export function readPublicSnapshot(value: unknown): PublishedSnapshot | null {
     if (item.publishedAt !== null && (typeof item.publishedAt !== "string" || !Number.isFinite(Date.parse(item.publishedAt)))) return null;
     if (item.expiresAt !== null && (typeof item.expiresAt !== "string" || !Number.isFinite(Date.parse(item.expiresAt)))) return null;
     if (item.firstSeenAt !== undefined && (typeof item.firstSeenAt !== "string" || !Number.isFinite(Date.parse(item.firstSeenAt)))) return null;
+    if (item.image !== undefined && item.image !== null && !safeHttpUrl(item.image)) return null;
   }
   return snapshot;
 }
@@ -46,6 +47,7 @@ function activeItem(item: DealSnapshotItem, firstSeenAt: string, now: number): D
   return {
     title: safeDisplayText(item.title, 300),
     summary: safeDisplayText(item.summary, SUMMARY_MAX),
+    image: item.image ? safeHttpUrl(item.image) : null,
     url: canonicalUrl(item.url),
     sourceId: source.id,
     sourceName: source.name,

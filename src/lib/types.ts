@@ -16,6 +16,8 @@ export type ParsedItem = {
   summary: string;
   publishedAt: number | null;
   expiresAt: number | null;
+  /** 来源内容自带的第一张配图（封面）；论坛类来源通常没有，保持 null。 */
+  image?: string | null;
 };
 
 export type SourceQuality = {
@@ -53,6 +55,8 @@ export type DealDTO = {
   expiresLabel: string | null;
   expiresSoon: boolean;
   isNew: boolean;
+  /** 来源自带封面图 URL（已经过安全校验）；没有配图时为 null，界面用分类色块兜底。 */
+  image?: string | null;
 };
 
 export type FailureDTO = {

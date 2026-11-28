@@ -104,6 +104,7 @@ function normalizeDeal(value: unknown): DealDTO | null {
     canonicalUrl,
     title: safeDisplayText(value.title, TITLE_MAX),
     summary: safeDisplayText(value.summary, SUMMARY_MAX),
+    image: safeHttpUrl(value.image),
     category: categoryOf(value.category),
     sourceId: clampText(value.sourceId, SHORT_MAX),
     sourceName: clampText(value.sourceName, SHORT_MAX),

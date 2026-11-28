@@ -48,6 +48,7 @@ export function getBoardState(now = Date.now()): BoardState {
     // of rewriting the user's database; toPlain is idempotent.
     title: toPlain(deal.title),
     summary: toPlain(deal.summary),
+    image: deal.image,
     category: process.env.PERKRADAR_STORED_CATEGORIES === "1" ? asCategory(deal.category) : classify(deal.title, deal.sourceId),
     sourceId: deal.sourceId,
     sourceName: sourceName(deal.sourceId),
