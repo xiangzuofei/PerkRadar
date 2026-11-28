@@ -113,3 +113,42 @@ describe("Epic current free games", () => {
     );
   });
 });
+
+describe("Epic cover image", () => {
+  it("prefers the wide offer image from keyImages", () => {
+    const payload = {
+      data: {
+        Catalog: {
+          searchStore: {
+            elements: [
+              {
+                title: "SYNTHETIC imaged",
+                productSlug: "synthetic-imaged",
+                price: { totalPrice: { discountPrice: 0 } },
+                keyImages: [
+                  { type: "DieselGameBox", url: "https://cdn.example.com/box.jpg" },
+                  { type: "OfferImageWide", url: "https://cdn.example.com/wide.jpg" },
+                ],
+                promotions: {
+                  promotionalOffers: [
+                    {
+                      promotionalOffers: [
+                        {
+                          startDate: "2026-11-01T00:00:00.000Z",
+                          endDate: "2026-11-20T00:00:00.000Z",
+                          discountSetting: { discountPercentage: 0 },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+    const [item] = parseEpicFreeGames(payload, NOW);
+    assert.equal(item?.image, "https://cdn.example.com/wide.jpg");
+  });
+});

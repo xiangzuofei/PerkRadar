@@ -185,7 +185,7 @@ describe("audit regressions", { concurrency: false }, () => {
   });
   it("migrates idempotently, retains latest history, and fences lease ownership", () => {
     useMemoryDb();
-    assert.equal(getDb().prepare("PRAGMA user_version").get()?.user_version, 1);
+    assert.equal(getDb().prepare("PRAGMA user_version").get()?.user_version, 2);
     assert.equal(acquireLease("test", "a", NOW, 100), true);
     assert.equal(acquireLease("test", "b", NOW + 1, 100), false);
     assert.equal(acquireLease("test", "b", NOW + 100, 100), true);

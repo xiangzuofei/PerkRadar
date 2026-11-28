@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { STORAGE_KEY } from "../src/lib/personal-storage";
-import { activeDeals, emptyFeedback, loadFeedback, loadSnapshotBundle, loadViewerPersonal, nextBoundaryDelay, parseSnapshot, parseSnapshotStatus, rankDeals, saveFeedback, saveViewerPersonal, scoreItem, selectDeals, setVote, type Feedback } from "../snapshot-viewer/model";
+import { activeDeals, dayBadge, dayBucket, emptyFeedback, isDiscussionItem, loadFeedback, loadSnapshotBundle, loadViewerPersonal, matchesDayFilter, nextBoundaryDelay, parseSnapshot, parseSnapshotStatus, rankDeals, saveFeedback, saveViewerPersonal, scoreItem, selectDeals, setVote, type Feedback } from "../snapshot-viewer/model";
 import type { DealDTO } from "../src/lib/types";
 
 const NOW = Date.parse("2026-11-11T08:00:00Z");
@@ -228,5 +228,53 @@ describe("snapshot viewer feedback and ranking", () => {
     assert.deepEqual(rankDeals([software, game], likedSoftware, noPersonal, NOW).map((item) => item.canonicalUrl), [software.canonicalUrl, game.canonicalUrl]);
     const dislikedSoftware = setVote(empty, deal({ title: "又一个工具", category: "软件工具", canonicalUrl: "https://linux.do/t/topic/14", url: "https://linux.do/t/topic/14" }), "dislike");
     assert.deepEqual(rankDeals([software, game], dislikedSoftware, noPersonal, NOW).map((item) => item.canonicalUrl), [game.canonicalUrl, software.canonicalUrl]);
+  });
+});
+
+describe("snapshot viewer images and days", () => {
+  it("keeps a safe https image and drops unsafe ones without dropping the item", () => {
+    const withImage = parsed(snapshotInput({ items: [itemInput({ image: "https://img.example.com/cover.jpg" })] }));
+    assert.equal(withImage.items[0]?.image, "https://img.example.com/cover.jpg");
+    const unsafe = parsed(snapshotInput({ items: [itemInput({ image: "javascript:alert(1)" })] }));
+    assert.equal(unsafe.items[0]?.image, null);
+  });
+
+  it("buckets by Beijing calendar day and matches the day filter", () => {
+    // NOW = 2026-11-11T08:00Z，即北京时间 11月11日 16:00。
+    assert.equal(dayBucket(NOW - 3_600_000, NOW), "today");
+    assert.equal(dayBucket(Date.parse("2026-11-10T16:00:00Z"), NOW), "today");
+    assert.equal(dayBucket(Date.parse("2026-11-10T15:59:00Z"), NOW), "yesterday");
+    assert.equal(dayBucket(NOW - 2 * 86_400_000, NOW), "dayBefore");
+    assert.equal(dayBucket(NOW - 5 * 86_400_000, NOW), "earlier");
+    assert.equal(dayBucket(null, NOW), "unknown");
+    assert.match(dayBadge(NOW - 3_600_000, NOW), /^今天 /);
+    assert.match(dayBadge(NOW - 86_400_000, NOW), /^昨天 /);
+    assert.equal(matchesDayFilter("dayBefore", "earlier"), true);
+    assert.equal(matchesDayFilter("today", "yesterday"), false);
+    assert.equal(matchesDayFilter("earlier", "all"), true);
+  });
+
+  it("flags discussion posts as low value and keeps real deals", () => {
+    assert.equal(isDiscussionItem({ title: "求助：这个报错怎么解决", sourceId: "nodeseek" }), true);
+    assert.equal(isDiscussionItem({ title: "闲聊一下最近的行情", sourceId: "nodeseek" }), true);
+    assert.equal(isDiscussionItem({ title: "腾讯云大促 服务器 2 折起", sourceId: "nodeseek" }), false);
+  });
+
+  it("feedback defaults to curated mode with no day filter and round-trips them", () => {
+    const empty = emptyFeedback();
+    assert.equal(empty.curated, true);
+    assert.equal(empty.day, "all");
+    const backing = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => backing.get(key) ?? null,
+      setItem: (key: string, value: string) => { backing.set(key, value); },
+    };
+    const changed: Feedback = { ...empty, curated: false, day: "today" };
+    assert.equal(saveFeedback(() => storage, changed), true);
+    assert.deepEqual(loadFeedback(() => storage).feedback, changed);
+    backing.set("perkradar-feedback-v1", JSON.stringify({ liked: [], hidden: [], likeSignals: {}, dislikeSignals: {}, sort: "smart" }));
+    const legacy = loadFeedback(() => storage).feedback;
+    assert.equal(legacy.curated, true);
+    assert.equal(legacy.day, "all");
   });
 });

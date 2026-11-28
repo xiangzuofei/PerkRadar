@@ -196,3 +196,22 @@ describe("public snapshot", () => {
     }
   });
 });
+
+describe("snapshot cover image", () => {
+  it("carries the deal image into the snapshot and through publication", () => {
+    const board = syntheticBoard();
+    board.deals[0] = { ...board.deals[0]!, image: "https://img.example.com/cover.jpg" };
+    const snapshot = buildSnapshot(board);
+    assert.equal(snapshot.items[0]?.image, "https://img.example.com/cover.jpg");
+    snapshot.sources = [{ ...snapshot.sources[0]!, ok: true }];
+    snapshot.sourceHealth = { ok: 1, total: 7 };
+    const published = prepareSnapshotPublication(snapshot, null).latest;
+    assert.equal(published.items[0]?.image, "https://img.example.com/cover.jpg");
+  });
+
+  it("rejects a snapshot whose image is not a safe http(s) url", () => {
+    const snapshot = publicationSnapshot();
+    snapshot.items[0] = { ...snapshot.items[0]!, image: "javascript:alert(1)" };
+    assert.equal(readPublicSnapshot(snapshot), null);
+  });
+});

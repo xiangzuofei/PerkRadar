@@ -69,3 +69,28 @@ describe("RSS and Atom", () => {
     }
   });
 });
+
+describe("feed images", () => {
+  const rss = (inner: string) =>
+    `<?xml version="1.0"?><rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:media="http://search.yahoo.com/mrss/"><channel><title>t</title><item><title>SYNTHETIC 带图文章</title><link>https://www.ghxi.com/post-1</link><pubDate>Sun, 08 Nov 2026 05:00:00 GMT</pubDate>${inner}</item></channel></rss>`;
+
+  it("extracts the first content image from content:encoded", () => {
+    const [item] = parseFeed(rss(`<content:encoded><![CDATA[<p>正文</p><img src="https://img.example.com/cover.jpg" />]]></content:encoded>`));
+    assert.equal(item?.image, "https://img.example.com/cover.jpg");
+  });
+
+  it("prefers media:thumbnail and upgrades http to https", () => {
+    const [item] = parseFeed(rss(`<media:thumbnail url="http://img.example.com/thumb.jpg" /><content:encoded><![CDATA[<img src="https://img.example.com/body.jpg" />]]></content:encoded>`));
+    assert.equal(item?.image, "https://img.example.com/thumb.jpg");
+  });
+
+  it("skips tracking pixels and emoji images", () => {
+    const [item] = parseFeed(rss(`<content:encoded><![CDATA[<img src="https://img.example.com/pixel.gif" width="1" height="1" /><img src="https://img.example.com/emoji/smile.png" /><img src="https://img.example.com/real.jpg" />]]></content:encoded>`));
+    assert.equal(item?.image, "https://img.example.com/real.jpg");
+  });
+
+  it("returns a null image when the feed carries none", () => {
+    const [item] = parseFeed(rss(`<description>纯文字摘要</description>`));
+    assert.equal(item?.image, null);
+  });
+});
