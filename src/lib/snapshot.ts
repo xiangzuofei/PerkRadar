@@ -8,6 +8,8 @@ export type DealSnapshotItem = {
   title: string;
   /** 来源订阅源自带的简短摘要（已清洗截断）；无摘要的来源为空字符串。 */
   summary: string;
+  /** 来源自带封面图 URL；旧版快照可省略，无图为 null。 */
+  image?: string | null;
   url: string;
   sourceId: string;
   sourceName: string;
@@ -77,6 +79,7 @@ export function buildSnapshot(board: BoardState): DealSnapshot {
     items: board.deals.map((deal) => ({
       title: deal.title,
       summary: excerpt(deal.summary),
+      image: deal.image ?? null,
       url: deal.url,
       sourceId: deal.sourceId,
       sourceName: deal.sourceName,

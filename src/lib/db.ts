@@ -9,6 +9,8 @@ export type DealRow = {
   url: string;
   title: string;
   summary: string;
+  /** 来源自带封面图；旧数据与无图来源为 null。 */
+  image: string | null;
   category: string;
   sourceId: string;
   publishedAt: number | null;
@@ -102,16 +104,23 @@ export function openDatabase(filename: string): DatabaseSync {
 
 export function migrateDatabase(db: DatabaseSync): void {
   const version = Number((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version);
-  if (version > 1) { db.close(); throw new Error("数据库版本高于程序支持版本，拒绝降级"); }
-  if (version === 1) return;
+  if (version > 2) { db.close(); throw new Error("数据库版本高于程序支持版本，拒绝降级"); }
+  if (version === 2) return;
   db.exec("BEGIN IMMEDIATE");
   try {
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_source_runs_source_round ON source_runs(source_id, round_id DESC, id DESC);
-      CREATE INDEX IF NOT EXISTS idx_rounds_finished ON rounds(finished_at);
-      CREATE TABLE IF NOT EXISTS leases (name TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at INTEGER NOT NULL);
-      PRAGMA user_version = 1;
-    `);
+    if (version < 1) {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_source_runs_source_round ON source_runs(source_id, round_id DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_rounds_finished ON rounds(finished_at);
+        CREATE TABLE IF NOT EXISTS leases (name TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at INTEGER NOT NULL);
+      `);
+    }
+    // v2：deals 增加可空的 image_url（来源自带封面图）。旧行保持 NULL，语义与「无图」一致。
+    const columns = db.prepare("PRAGMA table_info(deals)").all() as Array<{ name?: unknown }>;
+    if (!columns.some((column) => column.name === "image_url")) {
+      db.exec("ALTER TABLE deals ADD COLUMN image_url TEXT");
+    }
+    db.exec("PRAGMA user_version = 2;");
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
@@ -168,6 +177,7 @@ function mapDeal(row: Record<string, unknown>): DealRow {
     url: String(row.url),
     title: String(row.title),
     summary: String(row.summary ?? ""),
+    image: typeof row.image_url === "string" && row.image_url ? row.image_url : null,
     category: String(row.category),
     sourceId: String(row.source_id),
     publishedAt: asNumber(row.published_at),
@@ -205,19 +215,20 @@ export function findDealByCanonical(canonicalUrl: string): DealRow | null {
   return row ? mapDeal(row) : null;
 }
 
-export function insertDeal(input: Omit<DealRow, "id">): number {
+export function insertDeal(input: Omit<DealRow, "id" | "image"> & { image?: string | null }): number {
   const result = getDb()
     .prepare(
       `INSERT INTO deals (
-        canonical_url, url, title, summary, category, source_id,
+        canonical_url, url, title, summary, image_url, category, source_id,
         published_at, expires_at, first_seen_at, first_seen_round_id, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.canonicalUrl,
       input.url,
       input.title,
       input.summary,
+      input.image ?? null,
       input.category,
       input.sourceId,
       input.publishedAt,
@@ -235,6 +246,7 @@ export function updateDeal(
     url: string;
     title: string;
     summary: string;
+    image?: string | null;
     category: string;
     publishedAt: number | null;
     expiresAt: number | null;
@@ -244,13 +256,14 @@ export function updateDeal(
   getDb()
     .prepare(
       `UPDATE deals
-       SET url = ?, title = ?, summary = ?, category = ?, published_at = ?, expires_at = ?, updated_at = ?
+       SET url = ?, title = ?, summary = ?, image_url = ?, category = ?, published_at = ?, expires_at = ?, updated_at = ?
        WHERE id = ?`,
     )
     .run(
       input.url,
       input.title,
       input.summary,
+      input.image ?? null,
       input.category,
       input.publishedAt,
       input.expiresAt,
