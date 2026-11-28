@@ -409,6 +409,11 @@ function Pill({ pressed, onClick, children, testId }: { pressed: boolean; onClic
 function DealCard({ deal, claimed, favorite, onClaim, onFavorite }: { deal: DealDTO; claimed: boolean; favorite: boolean; onClaim: () => void; onFavorite: () => void }) {
   return (
     <article className="demo-deal" data-claimed={claimed ? "true" : "false"} data-new={deal.isNew ? "true" : "false"} data-testid="deal-card" aria-label={deal.title}>
+      {deal.image ? (
+        // 来源自带封面图；加载失败时直接隐藏，不伪造占位图。
+        // eslint-disable-next-line @next/next/no-img-element
+        <img className="deal-cover" src={deal.image} alt="" loading="lazy" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.style.display = "none"; }} />
+      ) : null}
       <div className="deal-heading">
         <h2 data-testid="deal-title">{deal.title}</h2>
         <Button variant="ghost" className="demo-favorite" size="icon" data-testid="favorite" aria-label={`${favorite ? "取消收藏" : "收藏"}：${deal.title}`} aria-pressed={favorite} onClick={onFavorite}>

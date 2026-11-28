@@ -78,6 +78,7 @@
 .demo-results-heading > span { color: var(--muted-foreground); font-size: 13px; }
 .demo-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
 .demo-deal { display: flex; flex-direction: column; min-width: 0; padding: 26px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
+.deal-cover { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 12px; margin-bottom: 16px; background: var(--secondary); }
 .deal-heading { display: flex; align-items: flex-start; gap: 12px; min-height: 62px; margin-bottom: 18px; }
 .deal-heading h2 { flex: 1; min-width: 0; margin: 4px 0 0; font-size: 20px; line-height: 1.55; font-weight: 650; overflow-wrap: anywhere; }
 .perk-board .demo-favorite { display: flex; flex-shrink: 0; flex-direction: column; gap: 2px; width: 58px; height: 58px; padding: 6px; border: 1px solid var(--border); border-radius: 12px; color: var(--muted-foreground); background: var(--card); font-size: 11px; line-height: 1.3; }
