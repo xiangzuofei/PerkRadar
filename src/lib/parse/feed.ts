@@ -3,6 +3,7 @@ import { MAX_FEED_ITEMS } from "../config";
 import { publishTime } from "../publish-time";
 import { cleanTitle, excerpt } from "../text";
 import type { ParsedItem } from "../types";
+import { extractFeedImage } from "./image";
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -67,6 +68,7 @@ function itemFromRecord(record: Record<string, unknown>, now: number): ParsedIte
     summary: excerpt(summarySource),
     publishedAt,
     expiresAt: null,
+    image: extractFeedImage(record),
   };
 }
 

@@ -1,5 +1,6 @@
 import { cleanTitle, excerpt } from "../text";
 import type { ParsedItem } from "../types";
+import { cleanImageUrl } from "./image";
 
 type EpicOffer = {
   startDate?: string;
@@ -10,6 +11,7 @@ type EpicOffer = {
 type EpicElement = {
   title?: string;
   description?: string;
+  keyImages?: { type?: string; url?: string }[];
   productSlug?: string | null;
   offerMappings?: { pageSlug?: string; pageType?: string }[];
   catalogNs?: { mappings?: { pageSlug?: string; pageType?: string }[] };
@@ -35,6 +37,21 @@ function pageSlug(element: EpicElement): string | null {
   if (home?.pageSlug) return home.pageSlug;
   if (typeof element.productSlug === "string" && element.productSlug.length > 0) {
     return element.productSlug;
+  }
+  return null;
+}
+
+/** Epic 商品自带图：优先宽幅主图，其次任意一张可用图。 */
+function epicImage(element: EpicElement): string | null {
+  const images = Array.isArray(element.keyImages) ? element.keyImages : [];
+  for (const preferred of ["OfferImageWide", "DieselGameBoxWide", "OfferImageTall", "DieselGameBox"]) {
+    const hit = images.find((image) => image?.type === preferred);
+    const cleaned = cleanImageUrl(hit?.url);
+    if (cleaned) return cleaned;
+  }
+  for (const image of images) {
+    const cleaned = cleanImageUrl(image?.url);
+    if (cleaned) return cleaned;
   }
   return null;
 }
@@ -105,6 +122,7 @@ export function parseEpicFreeGames(payload: unknown, now: number): ParsedItem[] 
       summary: excerpt(element.description ?? ""),
       publishedAt: Math.min(...starts),
       expiresAt: Math.max(...ends),
+      image: epicImage(element),
     });
   }
   return items;
