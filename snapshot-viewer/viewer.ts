@@ -1,14 +1,26 @@
 import { CATEGORIES } from "../src/lib/types.js";
 import type { DealFilters } from "../src/lib/filter-deals.js";
 import type { Personal } from "../src/lib/personal-storage.js";
-import { activeDeals, formatTime, keywordTags, loadFeedback, loadSnapshotBundle, loadViewerPersonal, nextBoundaryDelay, rankDeals, saveFeedback, saveViewerPersonal, selectDeals, setVote, SnapshotLoadError, type Feedback, type SortMode, type ViewerSnapshot, type SnapshotStatus } from "./model.js";
+import { activeDeals, dayBadge, dayBucket, dayGroupTitle, formatTime, isDiscussionItem, keywordTags, loadFeedback, loadSnapshotBundle, loadViewerPersonal, matchesDayFilter, nextBoundaryDelay, rankDeals, saveFeedback, saveViewerPersonal, selectDeals, setVote, SnapshotLoadError, type DayBucket, type DayFilter, type Feedback, type SortMode, type ViewerItem, type ViewerSnapshot, type SnapshotStatus } from "./model.js";
+
+/** 分类色块兜底图的大图标；有真实封面图的条目不用它。 */
+const CATEGORY_GLYPH: Record<string, string> = {
+  "免费白嫖": "🎁",
+  "限免": "⏰",
+  "低价优惠": "🏷️",
+  "会员订阅": "👑",
+  "游戏": "🎮",
+  "软件工具": "🛠️",
+  "其他": "📦",
+};
 
 /** 组件只访问静态 HTML 声明的控件；DOM 引用不跨页面复用。 */
 function elements(root: HTMLElement) {
   const get = <T extends HTMLElement>(id: string) => root.querySelector<T>(`#${id}`)!;
   return {
     query: get<HTMLInputElement>("q"), source: get<HTMLSelectElement>("source"), category: get<HTMLSelectElement>("cat"),
-    catchips: get<HTMLDivElement>("catchips"), hotwords: get<HTMLDivElement>("hotwords"),
+    catchips: get<HTMLDivElement>("catchips"), timechips: get<HTMLDivElement>("timechips"), hotwords: get<HTMLDivElement>("hotwords"),
+    onlyCurated: get<HTMLInputElement>("onlyCurated"),
     sort: get<HTMLSelectElement>("sort"), showHidden: get<HTMLInputElement>("showHidden"), hiddenLabel: get("hidden-label"),
     onlyNew: get<HTMLInputElement>("onlyNew"), onlyFavorites: get<HTMLInputElement>("onlyFav"), showAll: get<HTMLInputElement>("showAll"), reset: get<HTMLButtonElement>("reset"),
     retry: get<HTMLButtonElement>("retry"), meta: get("meta"), warning: get("warning"), storageWarning: get("storage-warning"),
@@ -122,6 +134,36 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
     ui.failures.replaceChildren(...recentFailures.map((failure) => node("li", "", `${failure.sourceName || failure.sourceId}：${failure.error}`)));
   }
 
+  /** 卡片头图：来源自带封面优先，加载失败或无图时用分类色块兜底，不伪造图片。 */
+  function renderMedia(deal: ReturnType<typeof selectDeals>[number]): HTMLElement {
+    const media = node("div", "snapshot-media");
+    const tile = node("div", "snapshot-tile");
+    tile.append(node("span", "snapshot-tile-glyph", CATEGORY_GLYPH[deal.category] ?? "📦"));
+    tile.append(node("span", "snapshot-tile-source", deal.sourceName));
+    if (deal.image) {
+      const img = document.createElement("img");
+      img.src = deal.image;
+      img.alt = "";
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.referrerPolicy = "no-referrer";
+      img.addEventListener("error", () => { img.replaceWith(tile); }, { once: true });
+      media.append(img);
+    } else {
+      media.append(tile);
+    }
+    const badges = node("div", "snapshot-media-badges");
+    badges.append(node("span", "snapshot-media-badge is-cat", deal.category));
+    if (deal.isNew) badges.append(node("span", "snapshot-media-badge is-new", "本轮新增"));
+    media.append(badges);
+    if (deal.expiresLabel) {
+      const expiry = node("span", "snapshot-media-badge is-expiry", `${deal.expiresSoon ? "⏰ 即将截止" : "截止"} ${deal.expiresLabel}`);
+      expiry.dataset.soon = String(deal.expiresSoon);
+      media.append(expiry);
+    }
+    return media;
+  }
+
   /** 卡片只创建经过协议与来源校验的链接，个人状态通过按钮明确表达。 */
   function renderItem(deal: ReturnType<typeof selectDeals>[number], now: number): HTMLElement {
     const card = node("article", "snapshot-item");
@@ -129,6 +171,10 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
     const favorite = personal.favorites.includes(deal.canonicalUrl);
     card.dataset.claimed = String(claimed);
     card.dataset.category = deal.category;
+    const bucket = dayBucket(deal.publishedAt ?? (deal as ViewerItem).firstSeenAt ?? null, now);
+    card.dataset.bucket = bucket;
+    card.append(renderMedia(deal));
+    const body = node("div", "snapshot-item-body");
     const title = node("h2", "");
     const link = node("a", "");
     link.href = deal.url;
@@ -138,18 +184,19 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
     title.append(link);
     const meta = node("p", "snapshot-item-meta");
     meta.append(document.createTextNode(`${deal.sourceName} · `));
-    meta.append(node("span", "snapshot-item-cat", deal.category));
-    meta.append(document.createTextNode(` · ${publishedText(deal.publishedAt, deal.publishedLabel, now)}`));
-    card.append(title, meta);
-    if (deal.summary) card.append(node("p", "snapshot-summary", deal.summary));
+    const day = node("span", "snapshot-day", dayBadge(deal.publishedAt ?? (deal as ViewerItem).firstSeenAt ?? null, now));
+    day.dataset.bucket = bucket;
+    meta.append(day);
+    const relative = publishedText(deal.publishedAt, deal.publishedLabel, now);
+    if (deal.publishedAt !== null && bucket !== "unknown") meta.append(document.createTextNode(` · ${relative}`));
+    body.append(title, meta);
+    if (deal.summary) body.append(node("p", "snapshot-summary", deal.summary));
     const tags = node("div", "snapshot-tags");
     const addTag = (text: string, kind: string) => {
       const tag = node("span", "snapshot-tag", text);
       tag.dataset.kind = kind;
       tags.append(tag);
     };
-    if (deal.isNew) addTag("本轮新增", "new");
-    if (deal.expiresLabel) addTag(`${deal.expiresSoon ? "即将截止" : "截止"} ${deal.expiresLabel}`, "expiry");
     if (claimed) addTag("已领", "claimed");
     for (const keyword of keywordTags(deal.title)) {
       const tag = node("button", "snapshot-tag", keyword);
@@ -159,7 +206,7 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
       tag.title = `按「${keyword}」筛选`;
       tags.append(tag);
     }
-    if (tags.childElementCount) card.append(tags);
+    if (tags.childElementCount) body.append(tags);
     const actions = node("div", "snapshot-item-actions");
     const liked = feedback.liked.includes(deal.canonicalUrl);
     const hiddenItem = feedback.hidden.includes(deal.canonicalUrl);
@@ -184,7 +231,8 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
       button.setAttribute("aria-label", `${label}：${deal.title}`);
       actions.append(button);
     }
-    card.append(actions);
+    body.append(actions);
+    card.append(body);
     return card;
   }
 
@@ -206,6 +254,34 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
       if (count > 0) chips.push(make(category, category, count));
     }
     ui.catchips.replaceChildren(...chips);
+  }
+
+  /** 时间 chips：今天 / 昨天 / 更早的条数来自当前留存条目，点击即按天筛选。 */
+  function renderTimeChips(active: ReturnType<typeof activeDeals>, now: number): void {
+    const counts: Record<DayFilter, number> = { all: active.length, today: 0, yesterday: 0, earlier: 0 };
+    for (const item of active) {
+      const bucket = dayBucket(item.publishedAt ?? item.firstSeenAt ?? null, now);
+      if (bucket === "today") counts.today += 1;
+      else if (bucket === "yesterday") counts.yesterday += 1;
+      else counts.earlier += 1;
+    }
+    const defs: Array<[DayFilter, string]> = [["all", "全部时间"], ["today", "今天"], ["yesterday", "昨天"], ["earlier", "更早"]];
+    ui.timechips.replaceChildren(...defs.map(([value, label]) => {
+      const chip = node("button", "snapshot-chip", label);
+      chip.type = "button";
+      chip.dataset.daychip = value;
+      chip.dataset.active = String(feedback.day === value);
+      chip.append(node("span", "snapshot-chip-count", String(counts[value])));
+      return chip;
+    }));
+  }
+
+  /** 最新发布模式下的按天分组标题，吸顶显示当天条数。 */
+  function renderDayHeader(bucket: DayBucket, sampleAt: number | null, count: number): HTMLElement {
+    const header = node("div", "snapshot-day-header");
+    header.append(node("span", "snapshot-day-header-title", dayGroupTitle(bucket, sampleAt)));
+    header.append(node("span", "snapshot-day-header-count", `${count} 条`));
+    return header;
   }
 
   /** 热门关键词按当前留存标题的出现次数排序，点击即按该词搜索（搜索自动包含「其他」）。 */
@@ -256,18 +332,49 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
       ui.count.textContent = loading ? "正在加载…" : "尚无可展示条目";
       ui.hotwords.hidden = true;
       ui.catchips.replaceChildren();
+      ui.timechips.replaceChildren();
       ui.list.replaceChildren(emptyState(loading ? "正在加载线索…" : "快照暂时不可用", "读取公开快照后即可搜索、收藏和标记已领。"));
     } else {
       const active = activeDeals(snapshot, previous, now, status);
       const selected = selectDeals(snapshot, previous, filters(), personal, now, ui.onlyFavorites.checked, status);
       const hiddenCount = selected.filter((item) => feedback.hidden.includes(item.canonicalUrl)).length;
       const visible = ui.showHidden.checked ? selected : selected.filter((item) => !feedback.hidden.includes(item.canonicalUrl));
-      const shown = feedback.sort === "smart" ? rankDeals(visible, feedback, personal, now) : visible;
+      // 精选模式：隐藏讨论/求购/闲聊类低价值条目；已收藏或已点赞的始终保留。
+      const curatedOut = feedback.curated
+        ? visible.filter((item) => isDiscussionItem(item) && !personal.favorites.includes(item.canonicalUrl) && !feedback.liked.includes(item.canonicalUrl))
+        : [];
+      const curatedKept = curatedOut.length ? visible.filter((item) => !curatedOut.includes(item)) : visible;
+      const stamp = (item: (typeof curatedKept)[number]) => item.publishedAt ?? (item as ViewerItem).firstSeenAt ?? null;
+      const dayKept = curatedKept.filter((item) => matchesDayFilter(dayBucket(stamp(item), now), feedback.day));
+      const shown = feedback.sort === "smart" ? rankDeals(dayKept, feedback, personal, now) : dayKept;
       renderCategoryChips(active);
+      renderTimeChips(active, now);
       renderHotwords(active);
       ui.hiddenLabel.textContent = feedback.hidden.length ? `显示已隐藏（${feedback.hidden.length}）` : "显示已隐藏";
-      ui.count.textContent = `显示 ${shown.length} / ${active.length} 条 · 本轮新增 ${active.filter((item) => item.isNew).length} 条${hiddenCount && !ui.showHidden.checked ? ` · 已隐藏 ${hiddenCount} 条` : ""}`;
-      ui.list.replaceChildren(...(shown.length ? shown.map((deal) => renderItem(deal, now)) : [emptyState("没有符合条件的线索", "可以调整左侧筛选，或稍后重新读取快照。过期与超过七天的条目会自动移除。") ]));
+      ui.count.textContent = `显示 ${shown.length} / ${active.length} 条 · 本轮新增 ${active.filter((item) => item.isNew).length} 条${curatedOut.length ? ` · 精选已过滤 ${curatedOut.length} 条低价值` : ""}${hiddenCount && !ui.showHidden.checked ? ` · 已隐藏 ${hiddenCount} 条` : ""}`;
+      if (!shown.length) {
+        ui.list.replaceChildren(emptyState("没有符合条件的线索", "可以调整左侧筛选，或稍后重新读取快照。过期与超过七天的条目会自动移除。"));
+      } else if (feedback.sort === "newest" && feedback.day === "all") {
+        // 最新发布模式按天分组：今天 / 昨天 / 前天 / 更早，一眼分清新旧。
+        const children: HTMLElement[] = [];
+        const counts = new Map<DayBucket, number>();
+        for (const item of shown) {
+          const bucket = dayBucket(stamp(item), now);
+          counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
+        }
+        let lastBucket: DayBucket | null = null;
+        for (const item of shown) {
+          const bucket = dayBucket(stamp(item), now);
+          if (bucket !== lastBucket) {
+            lastBucket = bucket;
+            children.push(renderDayHeader(bucket, stamp(item), counts.get(bucket) ?? 0));
+          }
+          children.push(renderItem(item, now));
+        }
+        ui.list.replaceChildren(...children);
+      } else {
+        ui.list.replaceChildren(...shown.map((deal) => renderItem(deal, now)));
+      }
     }
     if (focusAction && focusUrl) {
       [...ui.list.querySelectorAll<HTMLButtonElement>("button[data-action]")].find((button) => button.dataset.action === focusAction && button.dataset.url === focusUrl)?.focus({ preventScroll: true });
@@ -328,6 +435,19 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
 
   ui.category.replaceChildren(new Option("全部分类", "all"), ...CATEGORIES.map((category) => new Option(category, category)));
   ui.sort.value = feedback.sort;
+  ui.onlyCurated.checked = feedback.curated;
+  ui.onlyCurated.addEventListener("input", () => {
+    feedback = { ...feedback, curated: ui.onlyCurated.checked };
+    if (!saveFeedback(() => window.localStorage, feedback)) storageWarning = "未保存：浏览器存储写入失败。精选偏好刷新后可能丢失。";
+    render();
+  }, { signal: listeners.signal });
+  ui.timechips.addEventListener("click", (event) => {
+    const chip = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("button[data-daychip]") : null;
+    if (!chip || !ui.timechips.contains(chip)) return;
+    feedback = { ...feedback, day: (chip.dataset.daychip ?? "all") as DayFilter };
+    if (!saveFeedback(() => window.localStorage, feedback)) storageWarning = "未保存：浏览器存储写入失败。时间筛选刷新后可能丢失。";
+    render();
+  }, { signal: listeners.signal });
   for (const control of [ui.query, ui.source, ui.category, ui.onlyNew, ui.onlyFavorites, ui.showAll, ui.showHidden]) control.addEventListener("input", render, { signal: listeners.signal });
   ui.sort.addEventListener("input", () => {
     feedback = { ...feedback, sort: ui.sort.value as SortMode };
@@ -342,6 +462,9 @@ export function mountSnapshotViewer(root: HTMLElement): () => void {
     ui.onlyFavorites.checked = false;
     ui.showAll.checked = false;
     ui.showHidden.checked = false;
+    ui.onlyCurated.checked = true;
+    feedback = { ...feedback, curated: true, day: "all" };
+    saveFeedback(() => window.localStorage, feedback);
     render();
   }, { signal: listeners.signal });
   ui.retry.addEventListener("click", () => { void refresh(); }, { signal: listeners.signal });

@@ -1,4 +1,5 @@
 import { safeDisplayText, safeHttpUrl } from "../src/lib/board-view.js";
+import { classifySignals } from "../src/lib/classify.js";
 import { BOARD_MAX_ITEMS, RETENTION_MS, SUMMARY_MAX, TITLE_MAX } from "../src/lib/config.js";
 import { filterDeals, type DealFilters } from "../src/lib/filter-deals.js";
 import { loadPersonal, STORAGE_KEY, type Personal } from "../src/lib/personal-storage.js";
@@ -79,12 +80,14 @@ function sourceItem(value: unknown, index: number, fetchedAt: number): ViewerIte
     if (value[key] !== undefined && value[key] !== null && timestamp(value[key]) === null) return null;
   }
   const category = (CATEGORIES as readonly unknown[]).includes(value.category) ? value.category as DealDTO["category"] : "其他";
+  const rawImage = safeHttpUrl(value.image);
   return {
     id: index,
     url,
     canonicalUrl: url,
     title,
     summary: safeDisplayText(value.summary, SUMMARY_MAX),
+    image: rawImage ? rawImage.replace(/^http:/, "https:") : null,
     category,
     sourceId: source.id,
     sourceName: source.name,
@@ -248,16 +251,21 @@ export function keywordTags(title: string): string[] {
 /** 点赞/点踩反馈独立存放，不触碰收藏与已领的既有存储键和形状。 */
 export const FEEDBACK_KEY = "perkradar-feedback-v1";
 export type SortMode = "smart" | "newest" | "expiring";
+/** 时间快捷筛选：全部 / 今天 / 昨天 / 更早（前天及以前）。 */
+export type DayFilter = "all" | "today" | "yesterday" | "earlier";
 export type Feedback = {
   liked: string[];
   hidden: string[];
   likeSignals: Record<string, number>;
   dislikeSignals: Record<string, number>;
   sort: SortMode;
+  /** 精选模式：默认开启，隐藏被分类规则判为讨论/求购/闲聊的低价值条目。 */
+  curated: boolean;
+  day: DayFilter;
 };
 
 export function emptyFeedback(): Feedback {
-  return { liked: [], hidden: [], likeSignals: {}, dislikeSignals: {}, sort: "smart" };
+  return { liked: [], hidden: [], likeSignals: {}, dislikeSignals: {}, sort: "smart", curated: true, day: "all" };
 }
 
 /** 一条内容的可学习信号：分类、来源与标题关键词。 */
@@ -335,6 +343,8 @@ export function loadFeedback(getStorage: () => StorageLike): { feedback: Feedbac
         likeSignals: signalMap(value.likeSignals),
         dislikeSignals: signalMap(value.dislikeSignals),
         sort: value.sort === "newest" || value.sort === "expiring" ? value.sort : "smart",
+        curated: value.curated !== false,
+        day: value.day === "today" || value.day === "yesterday" || value.day === "earlier" ? value.day : "all",
       },
       warning: null,
     };
@@ -404,4 +414,63 @@ const beijing = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", ye
 /** 统一按北京时间显示真实抓取和活动时间，不信任快照里的展示字符串。 */
 export function formatTime(at: number): string {
   return beijing.format(at);
+}
+
+const beijingDay = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
+const beijingClock = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false });
+const beijingDate = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "long", day: "numeric", weekday: "short" });
+
+/** 北京时间下的日历日序号（UTC 天数），用于跨日比较，避免本地时区干扰。 */
+function beijingDayIndex(at: number): number {
+  const [year, month, day] = beijingDay.format(at).split("-").map(Number);
+  return Math.floor(Date.UTC(year!, month! - 1, day!) / 86_400_000);
+}
+
+export type DayBucket = "today" | "yesterday" | "dayBefore" | "earlier" | "unknown";
+
+/** 按北京时间日历日把发布时间分桶：今天 / 昨天 / 前天 / 更早。未来时间按今天处理。 */
+export function dayBucket(at: number | null, now: number): DayBucket {
+  if (at === null || !Number.isFinite(at)) return "unknown";
+  const diff = beijingDayIndex(now) - beijingDayIndex(at);
+  if (diff <= 0) return "today";
+  if (diff === 1) return "yesterday";
+  if (diff === 2) return "dayBefore";
+  return "earlier";
+}
+
+export const DAY_BUCKET_LABEL: Record<DayBucket, string> = {
+  today: "今天",
+  yesterday: "昨天",
+  dayBefore: "前天",
+  earlier: "更早",
+  unknown: "时间未知",
+};
+
+/** 卡片上的时间徽标文案：如「今天 14:32」「昨天 09:05」「前天」「11月25日」。 */
+export function dayBadge(at: number | null, now: number): string {
+  if (at === null) return "时间未知";
+  const bucket = dayBucket(at, now);
+  if (bucket === "today") return `今天 ${beijingClock.format(at)}`;
+  if (bucket === "yesterday") return `昨天 ${beijingClock.format(at)}`;
+  if (bucket === "dayBefore") return `前天 ${beijingClock.format(at)}`;
+  return beijingDate.format(at);
+}
+
+/** 分组标题文案：如「今天 · 11月28日 周六」。 */
+export function dayGroupTitle(bucket: DayBucket, sampleAt: number | null): string {
+  if (bucket === "unknown" || sampleAt === null) return "时间未知";
+  return `${DAY_BUCKET_LABEL[bucket]} · ${beijingDate.format(sampleAt)}`;
+}
+
+/** 时间筛选与分桶的对应关系：earlier 包含前天与更早。 */
+export function matchesDayFilter(bucket: DayBucket, day: DayFilter): boolean {
+  if (day === "all") return true;
+  if (day === "today") return bucket === "today";
+  if (day === "yesterday") return bucket === "yesterday";
+  return bucket === "dayBefore" || bucket === "earlier" || bucket === "unknown";
+}
+
+/** 低价值判定与正式看板共用同一套分类信号：被判为讨论/求购/闲聊的不是优惠线索。 */
+export function isDiscussionItem(item: Pick<DealDTO, "title" | "sourceId">): boolean {
+  return classifySignals(item.title, item.sourceId).contentType === "discussion";
 }
